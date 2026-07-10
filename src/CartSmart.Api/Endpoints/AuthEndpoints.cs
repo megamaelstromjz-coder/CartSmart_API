@@ -11,12 +11,31 @@ public static class AuthEndpoints
 {
     public static RouteGroupBuilder MapAuthEndpoints(this RouteGroupBuilder group)
     {
-        group.MapPost("/register", Register);
-        group.MapPost("/login", Login);
-        group.MapPost("/google", LoginWithGoogle);
-        group.MapPost("/apple", LoginWithApple);
-        group.MapPost("/refresh", Refresh);
-        group.MapPost("/logout", Logout);
+        group.MapPost("/register", Register)
+            .Produces<AuthResponse>(StatusCodes.Status201Created)
+            .Produces<ApiError>(StatusCodes.Status400BadRequest)
+            .Produces<ApiError>(StatusCodes.Status422UnprocessableEntity);
+
+        group.MapPost("/login", Login)
+            .Produces<AuthResponse>(StatusCodes.Status200OK)
+            .Produces<ApiError>(StatusCodes.Status401Unauthorized);
+
+        group.MapPost("/google", LoginWithGoogle)
+            .Produces<AuthResponse>(StatusCodes.Status200OK)
+            .Produces<ApiError>(StatusCodes.Status401Unauthorized);
+
+        group.MapPost("/apple", LoginWithApple)
+            .Produces<AuthResponse>(StatusCodes.Status200OK)
+            .Produces<ApiError>(StatusCodes.Status401Unauthorized);
+
+        group.MapPost("/refresh", Refresh)
+            .Produces<AuthResponse>(StatusCodes.Status200OK)
+            .Produces<ApiError>(StatusCodes.Status401Unauthorized);
+
+        group.MapPost("/logout", Logout)
+            .Produces(StatusCodes.Status204NoContent);
+
+        group.MapPasswordEndpoints();
 
         return group;
     }
@@ -32,17 +51,19 @@ public static class AuthEndpoints
         var email = request.Email.Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(email) || !email.Contains('@'))
         {
-            return Results.Problem("A valid email is required.", statusCode: StatusCodes.Status400BadRequest);
+            return ApiResults.BadRequest("INVALID_EMAIL", "A valid email is required.");
         }
         if (string.IsNullOrWhiteSpace(request.Password) || request.Password.Length < 8)
         {
-            return Results.Problem("Password must be at least 8 characters.", statusCode: StatusCodes.Status400BadRequest);
+            return ApiResults.BadRequest("WEAK_PASSWORD", "Password must be at least 8 characters.");
         }
 
         var exists = await db.Users.AnyAsync(u => u.Email == email, cancellationToken);
         if (exists)
         {
-            return Results.Problem("An account with this email already exists.", statusCode: StatusCodes.Status409Conflict);
+            // 422, not 409: this is a semantic business-rule violation, not a version conflict
+            // (409 is reserved for optimistic-concurrency conflicts on list/item writes).
+            return ApiResults.UnprocessableEntity("EMAIL_ALREADY_REGISTERED", "An account with this email already exists.");
         }
 
         var now = DateTimeOffset.UtcNow;
@@ -75,7 +96,7 @@ public static class AuthEndpoints
 
         if (user is null || user.PasswordHash is null || !passwordHasher.VerifyPassword(user.PasswordHash, request.Password))
         {
-            return Results.Problem("Invalid email or password.", statusCode: StatusCodes.Status401Unauthorized);
+            return ApiResults.Unauthorized("INVALID_CREDENTIALS", "Email or password is incorrect.");
         }
 
         var response = await IssueTokensAsync(user, null, db, tokenService, jwtOptions.Value, cancellationToken);
@@ -93,7 +114,7 @@ public static class AuthEndpoints
         var identity = await validator.ValidateAsync(request.IdToken, cancellationToken);
         if (identity is null)
         {
-            return Results.Problem("Invalid Google identity token.", statusCode: StatusCodes.Status401Unauthorized);
+            return ApiResults.Unauthorized("INVALID_GOOGLE_TOKEN", "Invalid Google identity token.");
         }
 
         var user = await ResolveExternalUserAsync(AuthProvider.Google, identity, db, cancellationToken);
@@ -112,7 +133,7 @@ public static class AuthEndpoints
         var identity = await validator.ValidateAsync(request.IdToken, cancellationToken);
         if (identity is null)
         {
-            return Results.Problem("Invalid Apple identity token.", statusCode: StatusCodes.Status401Unauthorized);
+            return ApiResults.Unauthorized("INVALID_APPLE_TOKEN", "Invalid Apple identity token.");
         }
 
         var user = await ResolveExternalUserAsync(AuthProvider.Apple, identity, db, cancellationToken);
@@ -184,7 +205,7 @@ public static class AuthEndpoints
 
         if (existing is null || existing.RevokedAt is not null || existing.ExpiresAt < DateTimeOffset.UtcNow)
         {
-            return Results.Problem("Invalid or expired refresh token.", statusCode: StatusCodes.Status401Unauthorized);
+            return ApiResults.Unauthorized("INVALID_REFRESH_TOKEN", "Invalid or expired refresh token.");
         }
 
         var response = await IssueTokensAsync(existing.User, existing.DeviceId, db, tokenService, jwtOptions.Value, cancellationToken, revoking: existing);

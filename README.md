@@ -54,12 +54,25 @@ src/CartSmart.Api/
 ## API surface (Phase 1)
 
 - `POST /api/v1/auth/{register,login,google,apple,refresh,logout}`
+- `POST /api/v1/auth/password/forgot` — request a reset email (always 200, no account
+  enumeration); `POST /api/v1/auth/password/reset` — complete a reset with the emailed token;
+  `POST /api/v1/auth/password/change` — authenticated, proactive password change. All three
+  only apply to email/password accounts (see `AccountResponse.HasPassword`)
 - `GET/POST/DELETE /api/v1/devices` — device registration for multi-device sync
 - `PUT/DELETE /api/v1/lists/{listId}` and `/api/v1/lists/{listId}/items/{itemId}` — upsert by
   client-generated id, so writes work the same online or replayed after being offline
-- `GET /api/v1/sync?since={timestamp}` — delta pull of changed/deleted lists and items
+- `GET /api/v1/sync?since={timestamp}` — delta pull of changed/deleted lists and items;
+  `serverTime` in the response is the cursor to pass back as `since` on the next call
 - `GET /api/v1/reference/{version,products}` — versioned bundled product/category list
 - `GET/DELETE /api/v1/account`, `GET /api/v1/account/export` — profile data + GDPR export/erasure
+
+## Error responses
+
+Every non-2xx response is a single JSON envelope: `{ "code": "STRING_CODE", "message": "human-readable" }`.
+Status codes: `400` validation, `401` bad/expired credentials, `404` not found, `409` optimistic-
+concurrency conflict (list/item modified by another device), `422` semantic/business-rule
+violation (e.g. duplicate email on register). See `ApiError` in `Contracts/ErrorContracts.cs`
+and `Endpoints/ApiResults.cs`.
 
 ## Adding a migration
 

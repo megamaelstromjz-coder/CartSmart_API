@@ -9,9 +9,17 @@ public static class AccountEndpoints
 {
     public static RouteGroupBuilder MapAccountEndpoints(this RouteGroupBuilder group)
     {
-        group.MapGet("/", GetAccount);
-        group.MapGet("/export", ExportAccount);
-        group.MapDelete("/", DeleteAccount);
+        group.MapGet("/", GetAccount)
+            .Produces<AccountResponse>(StatusCodes.Status200OK)
+            .Produces<ApiError>(StatusCodes.Status404NotFound);
+
+        group.MapGet("/export", ExportAccount)
+            .Produces<AccountExportResponse>(StatusCodes.Status200OK)
+            .Produces<ApiError>(StatusCodes.Status404NotFound);
+
+        group.MapDelete("/", DeleteAccount)
+            .Produces(StatusCodes.Status204NoContent)
+            .Produces<ApiError>(StatusCodes.Status404NotFound);
 
         return group;
     }
@@ -25,11 +33,11 @@ public static class AccountEndpoints
 
         if (user is null)
         {
-            return Results.NotFound();
+            return ApiResults.NotFound("ACCOUNT_NOT_FOUND", "Account not found.");
         }
 
         return Results.Ok(new AccountResponse(
-            user.Id, user.Email, user.EmailVerified, user.CreatedAt,
+            user.Id, user.Email, user.EmailVerified, user.CreatedAt, user.PasswordHash is not null,
             user.ExternalLogins.Select(l => l.Provider.ToString()).ToList()));
     }
 
@@ -47,7 +55,7 @@ public static class AccountEndpoints
 
         if (user is null)
         {
-            return Results.NotFound();
+            return ApiResults.NotFound("ACCOUNT_NOT_FOUND", "Account not found.");
         }
 
         var response = new AccountExportResponse(
@@ -67,7 +75,7 @@ public static class AccountEndpoints
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
         if (user is null)
         {
-            return Results.NotFound();
+            return ApiResults.NotFound("ACCOUNT_NOT_FOUND", "Account not found.");
         }
 
         // Cascades to external logins, refresh tokens, devices, lists, and items (see DbContext config).

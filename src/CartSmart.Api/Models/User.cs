@@ -14,6 +14,7 @@ public class User
 
     public List<ExternalLogin> ExternalLogins { get; set; } = [];
     public List<RefreshToken> RefreshTokens { get; set; } = [];
+    public List<PasswordResetToken> PasswordResetTokens { get; set; } = [];
     public List<Device> Devices { get; set; } = [];
     public List<ShoppingList> ShoppingLists { get; set; } = [];
 }

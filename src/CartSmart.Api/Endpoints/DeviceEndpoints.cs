@@ -10,9 +10,16 @@ public static class DeviceEndpoints
 {
     public static RouteGroupBuilder MapDeviceEndpoints(this RouteGroupBuilder group)
     {
-        group.MapPost("/", RegisterDevice);
-        group.MapGet("/", ListDevices);
-        group.MapDelete("/{deviceId:guid}", RemoveDevice);
+        group.MapPost("/", RegisterDevice)
+            .Produces<DeviceResponse>(StatusCodes.Status200OK)
+            .Produces<ApiError>(StatusCodes.Status400BadRequest);
+
+        group.MapGet("/", ListDevices)
+            .Produces<List<DeviceResponse>>(StatusCodes.Status200OK);
+
+        group.MapDelete("/{deviceId:guid}", RemoveDevice)
+            .Produces(StatusCodes.Status204NoContent)
+            .Produces<ApiError>(StatusCodes.Status404NotFound);
 
         return group;
     }
@@ -25,7 +32,7 @@ public static class DeviceEndpoints
     {
         if (!Enum.TryParse<DevicePlatform>(request.Platform, ignoreCase: true, out var platform))
         {
-            return Results.Problem("Platform must be 'ios' or 'android'.", statusCode: StatusCodes.Status400BadRequest);
+            return ApiResults.BadRequest("INVALID_PLATFORM", "Platform must be 'ios' or 'android'.");
         }
 
         var userId = httpContext.User.GetUserId();
@@ -84,7 +91,7 @@ public static class DeviceEndpoints
         var device = await db.Devices.FirstOrDefaultAsync(d => d.Id == deviceId && d.UserId == userId, cancellationToken);
         if (device is null)
         {
-            return Results.NotFound();
+            return ApiResults.NotFound("DEVICE_NOT_FOUND", "Device not found.");
         }
 
         // Revoke any refresh tokens tied to this device so a lost/removed device can't keep syncing.

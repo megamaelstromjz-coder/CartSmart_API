@@ -15,6 +15,8 @@ public interface ITokenService
     string GenerateAccessToken(User user, out DateTimeOffset expiresAt);
     (string RawToken, string TokenHash) GenerateRefreshToken();
     string HashRefreshToken(string rawToken);
+    (string RawToken, string TokenHash) GeneratePasswordResetToken();
+    string HashPasswordResetToken(string rawToken);
 }
 
 public class TokenService(IOptions<JwtOptions> jwtOptions) : ITokenService
@@ -51,7 +53,17 @@ public class TokenService(IOptions<JwtOptions> jwtOptions) : ITokenService
         return (rawToken, HashRefreshToken(rawToken));
     }
 
-    public string HashRefreshToken(string rawToken)
+    public string HashRefreshToken(string rawToken) => HashOpaqueToken(rawToken);
+
+    public (string RawToken, string TokenHash) GeneratePasswordResetToken()
+    {
+        var rawToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        return (rawToken, HashPasswordResetToken(rawToken));
+    }
+
+    public string HashPasswordResetToken(string rawToken) => HashOpaqueToken(rawToken);
+
+    private static string HashOpaqueToken(string rawToken)
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(rawToken));
         return Convert.ToHexString(bytes);

@@ -10,10 +10,24 @@ public static class ListEndpoints
 {
     public static RouteGroupBuilder MapListEndpoints(this RouteGroupBuilder group)
     {
-        group.MapPut("/{listId:guid}", UpsertList);
-        group.MapDelete("/{listId:guid}", DeleteList);
-        group.MapPut("/{listId:guid}/items/{itemId:guid}", UpsertItem);
-        group.MapDelete("/{listId:guid}/items/{itemId:guid}", DeleteItem);
+        group.MapPut("/{listId:guid}", UpsertList)
+            .Produces<ShoppingListResponse>(StatusCodes.Status200OK)
+            .Produces<ApiError>(StatusCodes.Status400BadRequest)
+            .Produces<ApiError>(StatusCodes.Status409Conflict);
+
+        group.MapDelete("/{listId:guid}", DeleteList)
+            .Produces(StatusCodes.Status204NoContent)
+            .Produces<ApiError>(StatusCodes.Status404NotFound);
+
+        group.MapPut("/{listId:guid}/items/{itemId:guid}", UpsertItem)
+            .Produces<ShoppingListItemResponse>(StatusCodes.Status200OK)
+            .Produces<ApiError>(StatusCodes.Status400BadRequest)
+            .Produces<ApiError>(StatusCodes.Status404NotFound)
+            .Produces<ApiError>(StatusCodes.Status409Conflict);
+
+        group.MapDelete("/{listId:guid}/items/{itemId:guid}", DeleteItem)
+            .Produces(StatusCodes.Status204NoContent)
+            .Produces<ApiError>(StatusCodes.Status404NotFound);
 
         return group;
     }
@@ -29,7 +43,7 @@ public static class ListEndpoints
     {
         if (string.IsNullOrWhiteSpace(request.Name))
         {
-            return Results.Problem("Name is required.", statusCode: StatusCodes.Status400BadRequest);
+            return ApiResults.BadRequest("VALIDATION_ERROR", "Name is required.");
         }
 
         var userId = httpContext.User.GetUserId();
@@ -61,7 +75,7 @@ public static class ListEndpoints
         }
         catch (DbUpdateConcurrencyException)
         {
-            return Results.Problem("The list was modified by another device. Re-fetch and retry.", statusCode: StatusCodes.Status409Conflict);
+            return ApiResults.Conflict("LIST_CONFLICT", "The list was modified by another device. Re-fetch and retry.");
         }
 
         return Results.Ok(new ShoppingListResponse(list.Id, list.Name, list.UpdatedAt, list.CreatedAt, list.IsDeleted, []));
@@ -80,7 +94,7 @@ public static class ListEndpoints
 
         if (list is null)
         {
-            return Results.NotFound();
+            return ApiResults.NotFound("LIST_NOT_FOUND", "List not found.");
         }
 
         var now = DateTimeOffset.UtcNow;
@@ -106,14 +120,14 @@ public static class ListEndpoints
     {
         if (string.IsNullOrWhiteSpace(request.Name))
         {
-            return Results.Problem("Name is required.", statusCode: StatusCodes.Status400BadRequest);
+            return ApiResults.BadRequest("VALIDATION_ERROR", "Name is required.");
         }
 
         var userId = httpContext.User.GetUserId();
         var list = await db.ShoppingLists.FirstOrDefaultAsync(l => l.Id == listId && l.UserId == userId, cancellationToken);
         if (list is null || list.IsDeleted)
         {
-            return Results.NotFound();
+            return ApiResults.NotFound("LIST_NOT_FOUND", "List not found.");
         }
 
         var item = await db.ShoppingListItems.FirstOrDefaultAsync(i => i.Id == itemId && i.ShoppingListId == listId, cancellationToken);
@@ -154,7 +168,7 @@ public static class ListEndpoints
         }
         catch (DbUpdateConcurrencyException)
         {
-            return Results.Problem("The item was modified by another device. Re-fetch and retry.", statusCode: StatusCodes.Status409Conflict);
+            return ApiResults.Conflict("ITEM_CONFLICT", "The item was modified by another device. Re-fetch and retry.");
         }
 
         return Results.Ok(new ShoppingListItemResponse(
@@ -175,7 +189,7 @@ public static class ListEndpoints
 
         if (item is null)
         {
-            return Results.NotFound();
+            return ApiResults.NotFound("ITEM_NOT_FOUND", "Item not found.");
         }
 
         var now = DateTimeOffset.UtcNow;

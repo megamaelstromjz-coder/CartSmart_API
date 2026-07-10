@@ -8,8 +8,13 @@ public static class ReferenceEndpoints
 {
     public static RouteGroupBuilder MapReferenceEndpoints(this RouteGroupBuilder group)
     {
-        group.MapGet("/version", GetVersion);
-        group.MapGet("/products", GetProducts);
+        group.MapGet("/version", GetVersion)
+            .Produces<ReferenceVersionResponse>(StatusCodes.Status200OK)
+            .Produces<ApiError>(StatusCodes.Status404NotFound);
+
+        group.MapGet("/products", GetProducts)
+            .Produces<ReferenceListResponse>(StatusCodes.Status200OK)
+            .Produces<ApiError>(StatusCodes.Status404NotFound);
 
         return group;
     }
@@ -19,7 +24,7 @@ public static class ReferenceEndpoints
         var version = await db.ReferenceListVersions.FirstOrDefaultAsync(cancellationToken);
         if (version is null)
         {
-            return Results.NotFound();
+            return ApiResults.NotFound("REFERENCE_DATA_NOT_SEEDED", "Reference data has not been seeded yet.");
         }
 
         return Results.Ok(new ReferenceVersionResponse(version.Version, version.PublishedAt));
@@ -32,7 +37,7 @@ public static class ReferenceEndpoints
         var version = await db.ReferenceListVersions.FirstOrDefaultAsync(cancellationToken);
         if (version is null)
         {
-            return Results.NotFound();
+            return ApiResults.NotFound("REFERENCE_DATA_NOT_SEEDED", "Reference data has not been seeded yet.");
         }
 
         var products = await db.ProductReferenceItems

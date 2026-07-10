@@ -13,7 +13,17 @@ public static class SyncEndpoints
 
     public static RouteGroupBuilder MapSyncEndpoints(this RouteGroupBuilder group)
     {
-        group.MapGet("/", Pull);
+        // ServerTime is the cursor: pass it back as `since` on the next pull instead of the
+        // client's own clock, so client clock drift can't cause missed or duplicate deltas.
+        // Deletions are represented as entities with IsDeleted = true rather than separate
+        // id-only arrays, so a list/item never has two different wire shapes depending on
+        // whether it was deleted.
+        group.MapGet("/", Pull)
+            .WithSummary("Delta-pull changed lists/items since a cursor.")
+            .WithDescription("Pass the `serverTime` from the previous response as `since` on the next call to page forward. " +
+                "Deleted lists/items are included with IsDeleted = true rather than in separate id arrays.")
+            .Produces<SyncResponse>(StatusCodes.Status200OK);
+
         return group;
     }
 
