@@ -32,6 +32,13 @@ public static class ListEndpoints
         return group;
     }
 
+    // Postgres `timestamptz` stores microsecond precision, one digit less than .NET's 100ns
+    // ticks. Truncating here means the value we persist, return in the response, and later
+    // re-read from the DB are bit-for-bit identical — otherwise a client echoing an UpdatedAt
+    // back as ExpectedUpdatedAt on its next write would spuriously 409 on a perfectly valid
+    // write, since it could never exactly match the truncated value EF Core reloads from Postgres.
+    private static DateTimeOffset UtcNowForStorage() => new(DateTimeOffset.UtcNow.Ticks / 10 * 10, TimeSpan.Zero);
+
     // Upsert-by-client-generated-id: the client owns the id (a GUID minted offline), so a
     // create and an update are the same call and both work fine while offline.
     private static async Task<IResult> UpsertList(
@@ -49,7 +56,16 @@ public static class ListEndpoints
         var userId = httpContext.User.GetUserId();
         var list = await db.ShoppingLists.FirstOrDefaultAsync(l => l.Id == listId && l.UserId == userId, cancellationToken);
 
-        var now = DateTimeOffset.UtcNow;
+        // Real optimistic-concurrency precondition: if the client tells us what UpdatedAt it
+        // last saw and the server's current value has moved on, reject before writing anything.
+        // Omitting ExpectedUpdatedAt (e.g. a brand-new local edit with no prior server state
+        // seen yet) skips this check and falls back to unconditional last-write-wins.
+        if (list is not null && request.ExpectedUpdatedAt is not null && list.UpdatedAt != request.ExpectedUpdatedAt)
+        {
+            return ApiResults.Conflict("LIST_CONFLICT", "The list was modified by another device. Re-fetch and retry.");
+        }
+
+        var now = UtcNowForStorage();
         if (list is null)
         {
             list = new ShoppingList
@@ -75,10 +91,13 @@ public static class ListEndpoints
         }
         catch (DbUpdateConcurrencyException)
         {
+            // Defense-in-depth for the narrow window between the read above and this write
+            // landing concurrently with another request; the ExpectedUpdatedAt check above is
+            // the real, client-driven conflict signal.
             return ApiResults.Conflict("LIST_CONFLICT", "The list was modified by another device. Re-fetch and retry.");
         }
 
-        return Results.Ok(new ShoppingListResponse(list.Id, list.Name, list.UpdatedAt, list.CreatedAt, list.IsDeleted, []));
+        return Results.Ok(new ShoppingListResponse(list.Id, list.Name, list.UpdatedAt, list.CreatedAt, list.IsDeleted));
     }
 
     private static async Task<IResult> DeleteList(
@@ -97,7 +116,7 @@ public static class ListEndpoints
             return ApiResults.NotFound("LIST_NOT_FOUND", "List not found.");
         }
 
-        var now = DateTimeOffset.UtcNow;
+        var now = UtcNowForStorage();
         list.IsDeleted = true;
         list.UpdatedAt = now;
         foreach (var item in list.Items.Where(i => !i.IsDeleted))
@@ -131,7 +150,13 @@ public static class ListEndpoints
         }
 
         var item = await db.ShoppingListItems.FirstOrDefaultAsync(i => i.Id == itemId && i.ShoppingListId == listId, cancellationToken);
-        var now = DateTimeOffset.UtcNow;
+
+        if (item is not null && request.ExpectedUpdatedAt is not null && item.UpdatedAt != request.ExpectedUpdatedAt)
+        {
+            return ApiResults.Conflict("ITEM_CONFLICT", "The item was modified by another device. Re-fetch and retry.");
+        }
+
+        var now = UtcNowForStorage();
 
         if (item is null)
         {
@@ -168,6 +193,9 @@ public static class ListEndpoints
         }
         catch (DbUpdateConcurrencyException)
         {
+            // Defense-in-depth for the narrow window between the read above and this write
+            // landing concurrently with another request; the ExpectedUpdatedAt check above is
+            // the real, client-driven conflict signal.
             return ApiResults.Conflict("ITEM_CONFLICT", "The item was modified by another device. Re-fetch and retry.");
         }
 
@@ -192,7 +220,7 @@ public static class ListEndpoints
             return ApiResults.NotFound("ITEM_NOT_FOUND", "Item not found.");
         }
 
-        var now = DateTimeOffset.UtcNow;
+        var now = UtcNowForStorage();
         item.IsDeleted = true;
         item.UpdatedAt = now;
 

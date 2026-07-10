@@ -60,15 +60,37 @@ Three gaps raised by mobile engineering (see the CR doc) are addressed:
    message }` envelope (`Contracts/ErrorContracts.cs`, `Endpoints/ApiResults.cs`) instead of
    ASP.NET Core's default ProblemDetails shape. Register's duplicate-email case moved from 409
    to 422, reserving 409 specifically for optimistic-concurrency conflicts on list/item writes.
-2. **Sync/conflict shape**: `GET /sync`'s `ServerTime` and the `UpdatedAt` field on list/item
-   entities already existed and already satisfy the client's cursor and conflict-detection
-   needs — no protocol change was required, just OpenAPI documentation. Deletions stay
-   represented as full entities with `IsDeleted = true` rather than separate id-only arrays
-   (one wire shape per entity, not two). `AccountResponse` gained a `HasPassword` field so the
-   client can tell whether "forgot password" applies to a given account (a user can have both a
-   password and linked Google/Apple logins, so a single `authProvider` enum wouldn't have
-   worked). Pagination on `/sync` was deliberately not built — data volume is MVP-scale and the
-   schema is additive-only, so it can be retrofitted later without a breaking change.
+2. **Sync/conflict shape** (revised after client review of the first pass): `GET /sync`
+   (`SchemaVersion` 2) now returns flat, sibling `lists[]` and `items[]` arrays instead of
+   nesting items under each list — the old nested shape was ambiguous about whether a list
+   carried its full item set or only its changed items (it was actually always just the
+   changed items, which the nesting obscured). `items[]` correlates to its list via
+   `shoppingListId`; a list appears in `lists[]` if it changed itself or owns a changed item.
+   `ServerTime` is still the cursor to pass back as `since`. Deletions stay represented as full
+   entities with `IsDeleted = true` rather than separate id-only arrays (one wire shape per
+   entity, not two).
+
+   Optimistic concurrency is now a real precondition check, not just a caught exception:
+   `UpsertListRequest`/`UpsertListItemRequest` gained an optional `ExpectedUpdatedAt`. If the
+   client sends the `UpdatedAt` it last saw and the server's current value has moved on, the
+   write is rejected with 409 before anything is persisted; omitting it falls back to
+   unconditional last-write-wins. (The original version only relied on EF's
+   `DbUpdateConcurrencyException`, which can't actually fire here — the entity is loaded fresh
+   from the DB and mutated within the same request, so the "original" value EF checks against
+   is always already current. That path is kept as defense-in-depth for a true concurrent-
+   request race, but the `ExpectedUpdatedAt` check is what actually implements the client-driven
+   conflict signal.) Getting this right required truncating `UpdatedAt`/`CreatedAt` to
+   microsecond precision before persisting (`ListEndpoints.UtcNowForStorage`) — Postgres
+   `timestamptz` has one less digit of precision than .NET's `DateTimeOffset` ticks, so an
+   untruncated value returned in a PUT response could never exactly round-trip back through the
+   DB, and every correctly-submitted `ExpectedUpdatedAt` would have spuriously conflicted.
+
+   `AccountResponse` gained a `HasPassword` field so the client can tell whether "forgot
+   password" applies to a given account (a user can have both a password and linked
+   Google/Apple logins, so a single `authProvider` enum wouldn't have worked). Pagination on
+   `/sync` remains deliberately unbuilt — data volume is MVP-scale and the schema is
+   additive-only, so it can be added later (e.g. a continuation token) without a breaking
+   change; until then a single call always returns the full delta since the cursor.
 3. **Password reset/change**: `POST /auth/password/{forgot,reset,change}` added, backed by a
    new `PasswordResetTokens` table (same hashed-opaque-token pattern as refresh tokens, 30-
    minute expiry, single use). No email-delivery provider exists yet, so sending goes through a

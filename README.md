@@ -60,9 +60,13 @@ src/CartSmart.Api/
   only apply to email/password accounts (see `AccountResponse.HasPassword`)
 - `GET/POST/DELETE /api/v1/devices` — device registration for multi-device sync
 - `PUT/DELETE /api/v1/lists/{listId}` and `/api/v1/lists/{listId}/items/{itemId}` — upsert by
-  client-generated id, so writes work the same online or replayed after being offline
-- `GET /api/v1/sync?since={timestamp}` — delta pull of changed/deleted lists and items;
-  `serverTime` in the response is the cursor to pass back as `since` on the next call
+  client-generated id, so writes work the same online or replayed after being offline. Send the
+  last-seen `updatedAt` back as `expectedUpdatedAt` to get a real 409 if another device wrote
+  first; omit it for unconditional last-write-wins
+- `GET /api/v1/sync?since={timestamp}` — delta pull of changed/deleted lists and items, returned
+  as flat `lists[]`/`items[]` arrays (`items[].shoppingListId` correlates to its list; `items[]`
+  is always just the changed items, never a list's full item set); `serverTime` in the response
+  is the cursor to pass back as `since`. No pagination yet — a single call returns the full delta
 - `GET /api/v1/reference/{version,products}` — versioned bundled product/category list
 - `GET/DELETE /api/v1/account`, `GET /api/v1/account/export` — profile data + GDPR export/erasure
 

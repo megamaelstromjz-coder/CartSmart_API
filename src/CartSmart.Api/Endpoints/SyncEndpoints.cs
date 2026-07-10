@@ -9,7 +9,9 @@ namespace CartSmart.Api.Endpoints;
 public static class SyncEndpoints
 {
     // Bump only when the payload shape changes in a way older clients can't safely ignore.
-    private const int CurrentSchemaVersion = 1;
+    // v2: items moved from nested lists[].items to a flat, top-level items[] correlated by
+    // ShoppingListId — a client parsing the old nested shape would silently see no items.
+    private const int CurrentSchemaVersion = 2;
 
     public static RouteGroupBuilder MapSyncEndpoints(this RouteGroupBuilder group)
     {
@@ -17,11 +19,19 @@ public static class SyncEndpoints
         // client's own clock, so client clock drift can't cause missed or duplicate deltas.
         // Deletions are represented as entities with IsDeleted = true rather than separate
         // id-only arrays, so a list/item never has two different wire shapes depending on
-        // whether it was deleted.
+        // whether it was deleted. `lists` and `items` are flat sibling arrays, not nested —
+        // `items` is always exactly the changed items (correlate via ShoppingListId), never a
+        // list's full item set. No pagination/continuation token yet: a single call returns the
+        // entire delta since `since`. Not expected to matter at MVP scale; if it becomes an
+        // issue this will be added as an additive, backward-compatible field.
         group.MapGet("/", Pull)
             .WithSummary("Delta-pull changed lists/items since a cursor.")
-            .WithDescription("Pass the `serverTime` from the previous response as `since` on the next call to page forward. " +
-                "Deleted lists/items are included with IsDeleted = true rather than in separate id arrays.")
+            .WithDescription(
+                "Pass the `serverTime` from the previous response as `since` on the next call to page forward. " +
+                "`lists` and `items` are flat sibling arrays; `items` is always the changed items only (never a " +
+                "list's full item set), correlated to its list via `shoppingListId`. Deleted lists/items are " +
+                "included with `isDeleted = true` rather than in separate id arrays. No pagination yet: a single " +
+                "call returns the full delta since the cursor.")
             .Produces<SyncResponse>(StatusCodes.Status200OK);
 
         return group;
@@ -58,17 +68,13 @@ public static class SyncEndpoints
             .Where(l => relevantListIds.Contains(l.Id))
             .ToListAsync(cancellationToken);
 
-        var itemsByList = changedItems.ToLookup(i => i.ShoppingListId);
-
         var response = new SyncResponse(
             CurrentSchemaVersion,
             serverTime,
-            lists.Select(l => new ShoppingListResponse(
-                l.Id, l.Name, l.UpdatedAt, l.CreatedAt, l.IsDeleted,
-                itemsByList[l.Id].Select(i => new ShoppingListItemResponse(
-                    i.Id, i.ShoppingListId, i.Name, i.Quantity, i.Unit, i.Category,
-                    i.IsChecked, i.UpdatedAt, i.CreatedAt, i.IsDeleted)).ToList()))
-                .ToList());
+            lists.Select(l => new ShoppingListResponse(l.Id, l.Name, l.UpdatedAt, l.CreatedAt, l.IsDeleted)).ToList(),
+            changedItems.Select(i => new ShoppingListItemResponse(
+                i.Id, i.ShoppingListId, i.Name, i.Quantity, i.Unit, i.Category,
+                i.IsChecked, i.UpdatedAt, i.CreatedAt, i.IsDeleted)).ToList());
 
         return Results.Ok(response);
     }
